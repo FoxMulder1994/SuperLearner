@@ -1,0 +1,354 @@
+---
+title: " Super Learner Project"
+author: "Oswaldo Salazar"
+date: "November, 30 2019"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+  word_document: default
+  pdf_document: default 
+  odt_document: default
+  md_document: default
+  rtf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+library(rmarkdown)
+library(graphics)
+out_type <- knitr::opts_knit$get("rmarkdown.pandoc.to")
+display_output <- function(dataset, out_type, filter_opt = 'none') {
+  
+  if (out_type == "html") {
+    out_table <- DT::datatable(dataset, filter = filter_opt)
+  } else {
+    out_table <- knitr::kable(dataset)
+  } 
+  
+  out_table
+}
+```
+
+
+```{r}
+library(readxl)
+library(MLmetrics)
+library(caret)
+library(tree)
+library(e1071)
+library(ggplot2)
+library(caretEnsemble)
+library(tidyverse)
+library(rio)
+library(doParallel)
+library(viridis)
+library(RColorBrewer)
+library(ggthemes)
+library(knitr)
+library(plotly)
+library(lime)
+library(plotROC)
+library(pROC)
+library(SuperLearner)
+library(ipred)
+```
+
+# Introduction
+
+Ensemble machine learning methods use multiple learning algorithms to obtain better predictive performance than could be obtained from any of the constituent learning algorithms. Many of the popular modern machine learning algorithms are actually ensembles. For example, Random Forest and Gradient Boosting Machine (GBM) are both ensemble learners. Both bagging (e.g. Random Forest) and boosting (e.g. GBM) are methods for ensembling that take a collection of weak learners (e.g. decision tree) and form a single, strong learner. (https://h2o-release.s3.amazonaws.com/h2o/rel-wright/10/docs-website/h2o-docs/data-science/stacked-ensembles.html)
+
+
+# Reading the data...
+
+```{r}
+train = read.table('F:/MS.c_Statistics/Kansas_University/881 Data Statistical Learning I/Week 13/Data/summer_train.tsv', sep='\t', header=T)
+test = read.table('F:/MS.c_Statistics/Kansas_University/881 Data Statistical Learning I/Week 13/Data/summer_test.tsv', sep='\t', header=T)
+```
+
+
+# Building an initial Ensemble model
+
+The initial model was built using the same methodology used in class.The selected methods were Decision Trees (tree), Linear Regression (lm) and Support Vector Machines (SVM). 
+
+However, at this point some questions remain unanswered:
+
+1) Why are we using these specific methods and not different methodologies?
+2) Why are we using just three models and no more or less?
+3) What is the contribution of this model?
+4) Is there a way to estimate their associated risk for each method?
+
+In the following lines, we will show how to answer all of these questions by using the SuperLearner Methodology.
+
+Using the methology describe in class, we have
+
+1) Creating the models using the training data set.
+
+```{r}
+mod1 = tree(O3 ~ ., data=train)
+mod2 = lm(O3 ~ ., data=train)
+mod3 = svm(O3 ~ ., data=train)
+```
+
+2) Predicting with the newly created models using training data set.
+
+```{r}
+preds1 = predict(mod1, data=train)
+preds2 = predict(mod2, data=train)
+preds3 = predict(mod3, data=train)
+```
+
+3) Ensembling the models
+
+```{r}
+mod4 = svm(O3 ~ preds1 + preds2  + preds3, data=train)
+```
+
+4) Predicting with each model using the test data set.
+
+```{r}
+preds1 = predict(mod1, data=test)
+preds2 = predict(mod2, data=test)
+preds3 = predict(mod3, data=test)
+```
+
+5) Creating a data frame with the predictions using the training data set.
+
+```{r}
+new_dat = data.frame(O3 = train$O3, preds1 = preds1, preds2 = preds2, preds3 = preds3)
+```
+
+6) Calculating MSE
+
+```{r}
+preds = predict(mod4, new_dat)
+```
+
+
+```{r}
+MSE(preds, test$O3)
+```
+
+
+
+```{r}
+preds = cbind(preds1, preds2)
+preds = cbind(preds, preds3)
+preds = rowMeans(preds)
+
+```
+
+
+```{r}
+MSE(preds, test$O3)
+```
+
+As seen above, MSE is 124.32 and 104.40 for the ensembled models.
+
+# Super Learner: Introduction
+
+Stacked Ensemble method is supervised ensemble machine learning algorithm that finds the optimal combination of a collection of prediction algorithms using a process called stacking. Stacked Ensemble supports regression, binary classification and multiclass classification.
+
+There are some ensemble methods that are broadly labeled as stacking, however, the Super Learner ensemble _is distinguished by the use of cross-validation_ to form what is called the “level-one” data. In other words, SuperLearner is an algorithm that uses cross-validation to estimate the performance of multiple machine learning models, or the same model with different settings. It then creates an optimal weighted average of those models, which is also called an “ensemble”, using the test data performance.
+
+(https://h2o-release.s3.amazonaws.com/h2o/rel-wright/10/docs-website/h2o-docs/data-science/stacked-ensembles.html)
+(https://www.datacamp.com/community/tutorials/ensemble-r-machine-learning)
+
+
+# Super Learner: The Idea
+
+Leo Breiman, known for his work on classification and regression trees and random forests, formalized stacking in his 1996 paper on Stacked Regressions (Breiman 1996b). Although the idea originated in (Wolpert 1992) under the name “Stacked Generalizations”, the modern form of stacking that uses internal k-fold CV was Breiman’s contribution. (https://bradleyboehmke.github.io/HOML/stacking.html)
+
+However, it wasn’t until 2007 that the theoretical background for stacking was developed, and also when the algorithm took on the cooler name, Super Learner (Van der Laan, Polley, and Hubbard 2007). 
+
+There are a few package implementations for model stacking in the R ecosystem. SuperLearner (Polley et al. 2019) provides the original Super Learner and includes a clean interface to 30+ algorithms. (https://bradleyboehmke.github.io/HOML/stacking.html)
+
+
+We can train each of these models individually (see the code chunk below). However, to stack them later we need to do a few specific things:
+
+
+    1) All models must be trained on the same training set.
+    2) All models must be trained with the same number of CV folds.
+    3) All models must use the same fold assignment to ensure the same observations are used (we can do this by using fold_assignment = "Modulo").
+    4) The cross-validated predictions from all of the models must be preserved by setting keep_cross_validation_predictions = TRUE. This is the data which is          used to train the meta learner algorithm in the ensemble.
+
+SuperLearner makes it trivial to run many algorithms and use the best one or an ensemble. Also, SuperLearner automatically removes models that do not contribute to the ensemble prediction power, this leaves you free to experiment with numerous algorithms! Becasuse of that, we are including more models than described in the original workflow provided in class. However, for further applications we should be aware that we should have to decide which algorithms we will want to try before fitting a model. The reason is because the computation time might be compromised. For a small data set, such as this, there is minimal impact, but larger data sets could be heavily affected.
+
+Installing SuperLearner...
+
+```{r}
+# install.packages("devtools")
+#devtools::install_github("ecpolley/SuperLearner")
+```
+
+```{r}
+#install.packages("SuperLearner")
+```
+
+ 
+
+# Training the model
+
+The first step with SuperLearner, is to create a "SuperLearner Library", including all the algorithms that we would like to assess.
+
+```{r}
+set.seed(1)
+
+sl_lib = c("SL.xgboost", "SL.randomForest", "SL.glmnet", "SL.nnet", "SL.ksvm", "SL.svm",
+           "SL.caret", "SL.kernelKnn", "SL.rpartPrune", "SL.lm", "SL.mean", "SL.ridge", "SL.biglasso", "SL.ipredbagg" ) 
+
+# This SUper Learner library (sl_lib) includes Linear model "SL.lm", Trees "SL.randomForest" and SVM "SL.ksvm" as in the above chunck. However, Super Learner R's package  allows to include more models.                                                                                                                                                                                                            
+```
+
+
+Create automatic ensemble using the training data set.
+
+```{r include=FALSE}
+# Fit XGBoost, RF, Lasso, Neural Net, Kernel SVM, SVM, caret, K-nearest neighbors, Decision Tree, 
+# OLS, simple mean Ridge, Big lasso and Bagging; create automatic ensemble.
+result.train = SuperLearner(Y = train$O3, X = train[, -1], SL.library = sl_lib)
+
+```
+
+Review performance of each algorithm and ensemble weights.
+
+```{r}
+# Review performance of each algorithm and ensemble weights.
+result.train
+```
+
+Algorithms with _coefficient zero means that they are not weighted as part of the ensemble anymore_. In other words,  Random Forest, glmnet (lasso or elastic net regularization), nnet (Neural Netwotks), ksvm (Kernel Vector Machine), caret (Classification And REgression Training), kernelKnn (Kernel Nearest Neighbor), rpartPrune (Decision Trees), mean, biglasso (Extending Lasso Model Fitting to Big Data), are not contributing to the model.
+
+Algorithms with _coefficient different than zero means that they are weighted as part of the ensemble model_. Therefore, svm (Support Vector Machine) is the method that contributed the most with a coefficient of 0.49, followed by ipredbagg (bagging) with 0.27, lm (Linear Regression) with 0.20 and xgboost (eXtreme Gradient Boosting), with only 0.03.
+
+It is important to remember, that the best ensembles are not composed of the best performing algorithms, but rather the algorithms that best complement each other to classify a prediction.
+
+You will notice SuperLearner is calculating this risk for you and deciding on the optimal model mix that will reduce the error.
+
+To understand each model's specific contribution to the model and the variation, we can use SuperLearner's internal cross-validation function CV.SuperLearner().Using external (a.k.a nested) cross-validation we are able to estimate ensemble accuracy.
+
+```{r include=FALSE}
+# Use external (a.k.a nested) cross-validation to estimate ensemble accuracy.
+# This will take a while to run.
+result2.train = CV.SuperLearner(Y = train$O3, X = train[, -1], SL.library = sl_lib, V = 5) # To set the number of folds, you can use the V argument. In this case, we                                                                                         set it to 5.
+```
+
+# Summary and Plot performance of individual algorithms and compare to the ensemble.
+
+The summary of cross validation shows the average risk of the model, the variation of the model and the range of the risk.
+
+```{r}
+summary(result2.train)
+```
+
+Plotting this also produces a nice plot of the models used and their variation:
+
+```{r}
+plot(result2.train) + theme_minimal()
+```
+
+It's easy to see that Super Learner performs the best on average while xgboost (eXtreme Gradient Boosting) performs the worst and contains a lot of variation compared to the other models. The beauty of SuperLearner is that, if a model does not fit well or contribute much, it is just weighted to zero! There is no need to remove it and retrain unless you plan on retraining the model in the future. Just remember that proper model training involves cross validation of the entire model. 
+
+It is important to understand, that we can try to improve model's performance by tuning some hyperparameters of some of the models that we have in the ensemble. A method that is not weighted heavily in the model, probably is because we need to improve it by setting better parameters. Even methods selected can be improved.For example, we can improve bagging by increasing the nbagg parameter to 250 from the default of 25.
+
+# Make Predictions with SuperLearner
+
+With the specific command predict.SuperLearner() we can easily make predictions on new data sets. That means that we can not use the normal predict() function!
+
+```{r}
+predictions.train <- predict.SuperLearner(result.train, data= train)
+head(predictions.train$library.predict) #individual library predictions
+```
+
+This allows you to see how each model classified each observation. This could be useful in debugging the model or fitting multiple models at once to see which to use further.
+
+```{r}
+MSE(predictions.train$pred, train$O3)
+```
+
+
+# Test the model
+
+```{r include=FALSE}
+# Fit XGBoost, RF, Lasso, Neural Net, Kernel SVM, SVM, caret, K-nearest neighbors, Decision Tree, 
+# OLS, simple mean Ridge, Big lasso and Bagging; create automatic ensemble.
+result.test = SuperLearner(Y = test$O3, X = test[, -1], SL.library = sl_lib)
+
+```
+
+Review performance of each algorithm and ensemble weights.
+
+```{r}
+# Review performance of each algorithm and ensemble weights.
+result.test
+```
+
+ Xgboost (eXtreme Gradient Boosting), Random Forest, glmnet (lasso or elastic net regularization), nnet (Neural Netwotks), ksvm (Kernel Vector Machine), caret (Classification And REgression Training), kernelKnn (Kernel Nearest Neighbor), rpartPrune (Decision Trees), mean, ridge, biglasso (Extending Lasso Model Fitting to Big Data), are not contributing to the model.
+
+Svm (Support Vector Machine) is the method that contributed the most with a coefficient of 0.63, followed by biglasso (big lasso) with 0.19 and ipredbagg (bagging) with 0.17.
+
+To understand each model's specific contribution to the model and the variation, we can use SuperLearner's internal cross-validation function CV.SuperLearner().Using external (a.k.a nested) cross-validation we are able to estimate ensemble accuracy.
+
+```{r include=FALSE}
+# Use external (a.k.a nested) cross-validation to estimate ensemble accuracy.
+# This will take a while to run.
+result2.test = CV.SuperLearner(Y = test$O3, X = test[, -1], SL.library = sl_lib, V = 5) # To set the number of folds, you can use the V argument. In this case, we                                                                                         set it to 5.
+```
+
+# Summary and Plot performance of individual algorithms and compare to the ensemble.
+
+The summary of cross validation shows the average risk of the model, the variation of the model and the range of the risk.
+
+```{r}
+summary(result2.test)
+```
+
+Plotting this also produces a nice plot of the models used and their variation:
+
+```{r}
+plot(result2.test) + theme_minimal()
+```
+
+It's easy to see that Super Learner performs the best on average while xgboost (eXtreme Gradient Boosting) performs the worst and contains a lot of variation compared to the other models. 
+
+
+# Make Predictions with SuperLearner
+
+With the specific command predict.SuperLearner() we can easily make predictions on new data sets. That means that we can not use the normal predict() function!
+
+```{r}
+predictions.test <- predict.SuperLearner(result.test, data= test)
+head(predictions.test$library.predict) #individual library predictions
+```
+
+Estimating the MSE
+
+```{r}
+MSE(predictions.test$pred, test$O3)
+```
+
+
+# Conclusions
+
+1) SuperLearner outperform the traditional approach for Ensembling models.The MSE for the test training set was 45, while with the traditional approach more than 100.
+2) SuperLearner was easy to use and answered some key questions proposed at the beginning of this work.
+3) Even for this small data set, SuperLearner requiere some computational effort.
+4) Depending on the runs, results with SuperLearner may varies.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
